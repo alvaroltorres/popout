@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Popout</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0a0a0a;
+            color: white;
+            font-family: 'Press Start 2P', system-ui;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            touch-action: manipulation;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 480px;
+            margin: 0 auto;
+        }
+        
+        canvas {
+            background: #111;
+            border: 6px solid #fff;
+            image-rendering: crisp-edges;
+            display: block;
+        }
+        
+        .screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(10, 10, 10, 0.97);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        button {
+            font-family: 'Press Start 2P', system-ui;
+            padding: 12px 24px;
+            font-size: 16px;
+            background: #ff0033;
+            color: white;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 0 0 5px #000;
+            margin: 5px;
+        }
+        button:active { transform: scale(0.95); }
+
+        .title { font-size: 42px; color: #ff0033; text-shadow: 0 0 10px #ff0033; }
+
+        #bottom-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 15px;
+            z-index: 100;
+        }
+
+        #hud {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            display: none;
+            justify-content: space-between;
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 50;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game" width="480" height="640"></canvas>
+        
+        <!-- HUD - Only visible during gameplay -->
+        <div id="hud">
+            <div>LEVEL <span id="hud-level">1</span></div>
+            <div>TIME <span id="hud-time">0.00</span></div>
+            <div>SCORE <span id="hud-score">0</span></div>
+        </div>
+        
+        <!-- Bottom Controls -->
+        <div id="bottom-controls">
+            <button onclick="pauseGame()" style="background:#0066ff;">PAUSE</button>
+            <button onclick="goHome()" style="background:#666;">HOME</button>
+        </div>
+
+        <!-- Home Screen -->
+        <div id="home-screen" class="screen">
+            <h1 class="title">POPOUT</h1>
+            <p style="color:#ff0033; font-size:18px;">FIND THE RED DOT</p>
+            <button onclick="startGame()">START GAME</button>
+            <button onclick="showHighScores()">HIGH SCORES</button>
+        </div>
+        
+        <!-- Ready Screen -->
+        <div id="ready-screen" class="screen" style="display:none;">
+            <h2>LEVEL <span id="ready-level">1</span></h2>
+            <div id="countdown" style="font-size:120px; color:#ff0033;">3</div>
+        </div>
+        
+        <!-- Pause Screen -->
+        <div id="pause-screen" class="screen" style="display:none;">
+            <h2>PAUSED</h2>
+            <button onclick="resumeGame()">RESUME</button>
+            <button onclick="restartLevel()">RESTART LEVEL</button>
+            <button onclick="goHome()">HOME</button>
+        </div>
+        
+        <!-- Game Over -->
+        <div id="gameover-screen" class="screen" style="display:none;">
+            <h2>GAME OVER</h2>
+            <p>LEVEL <span id="final-level">0</span></p>
+            <p>SCORE: <span id="final-score">0</span></p>
+            <button onclick="restartGame()">TRY AGAIN</button>
+            <button onclick="goHome()">HOME</button>
+        </div>
+        
+        <!-- Level Complete -->
+        <div id="level-complete-screen" class="screen" style="display:none;">
+            <h2>LEVEL COMPLETE!</h2>
+            <p>TIME: <span id="complete-time">0.00</span>s</p>
+            <p>POINTS: <span id="complete-points">0</span></p>
+            <button onclick="nextLevel()">NEXT LEVEL</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        
+        let gameState = 'home';
+        let currentLevel = 1;
+        let score = 0;
+        let startTime = 0;
+        let timerInterval = null;
+        
+        let shapes = [];
+        let target = null;
+        let highScores = JSON.parse(localStorage.getItem('popoutHighScores')) || [];
+        
+        class Shape {
+            constructor(x, y, type, color) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.color = color;
+                this.size = 7.5;
+            }
+            
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.strokeStyle = '#111';
+                ctx.lineWidth = 1.5;
+                const s = this.size;
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                if (this.type === 'circle') {
+                    ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                } else if (this.type === 'square') {
+                    ctx.fillRect(-s, -s, s*2, s*2); ctx.strokeRect(-s, -s, s*2, s*2);
+                } else if (this.type === 'triangle') {
+                    ctx.beginPath();
+                    ctx.moveTo(0, -s*1.15); ctx.lineTo(-s*1.1, s*0.95); ctx.lineTo(s*1.1, s*0.95); ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+                } else if (this.type === 'diamond') {
+                    ctx.beginPath();
+                    ctx.moveTo(0, -s*1.3); ctx.lineTo(s*1.15, 0); ctx.lineTo(0, s*1.3); ctx.lineTo(-s*1.15, 0); ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+                }
+                ctx.restore();
+            }
+            
+            contains(px, py) {
+                const dx = px - this.x;
+                const dy = py - this.y;
+                return Math.sqrt(dx*dx + dy*dy) < this.size * 3.0;
+            }
+        }
+        
+        function generateLevel(level) {
+            shapes = [];
+            const padding = 48;
+            const areaW = 480 - padding * 2;
+            const areaH = 415;
+            const areaX = padding;
+            const areaY = 132;
+            
+            const numDistractors = Math.min(35 + level * 8, 115);
+            const shapeTypes = ['circle', 'square', 'triangle', 'diamond'];
+            
+            for (let i = 0; i < numDistractors; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = areaX + Math.random() * areaW;
+                    y = areaY + Math.random() * areaH;
+                    attempts++;
+                } while (isTooClose(x, y, 19) && attempts < 60);
+                
+                const isRed = Math.random() < 0.42;
+                const color = isRed ? '#ff0033' : '#00ccff';
+                let type = shapeTypes[Math.floor(Math.random() * shapeTypes.length)];
+                if (isRed && type === 'circle') type = 'square';
+                
+                shapes.push(new Shape(x, y, type, color));
+            }
+            
+            let tx, ty, attempts = 0;
+            do {
+                tx = areaX + Math.random() * areaW;
+                ty = areaY + Math.random() * areaH;
+                attempts++;
+            } while (isTooClose(tx, ty, 22) && attempts < 80);
+            
+            target = new Shape(tx, ty, 'circle', '#ff0033');
+            shapes.push(target);
+            shapes.sort(() => Math.random() - 0.5);
+        }
+        
+        function isTooClose(x, y, minDist) {
+            return shapes.some(s => Math.hypot(s.x - x, s.y - y) < minDist);
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 8;
+            ctx.strokeRect(35, 115, 410, 430);
+            shapes.forEach(shape => shape.draw());
+        }
+        
+        function gameLoop() {
+            if (gameState === 'playing') {
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        function updateTimer() {
+            if (gameState !== 'playing') return;
+            const elapsed = (Date.now() - startTime) / 1000;
+            document.getElementById('hud-time').textContent = elapsed.toFixed(2);
+            if (elapsed >= Math.max(4, 18 - currentLevel * 1.2)) endLevel(false);
+        }
+        
+        function startLevel() {
+            hideAllScreens();
+            document.getElementById('hud').style.display = 'flex';
+            document.getElementById('bottom-controls').style.display = 'flex';
+            
+            generateLevel(currentLevel);
+            document.getElementById('hud-level').textContent = currentLevel;
+            document.getElementById('hud-score').textContent = score;
+            
+            gameState = 'playing';
+            startTime = Date.now();
+            draw();
+            gameLoop();
+            
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(updateTimer, 16);
+        }
+        
+        function startCountdown() {
+            hideAllScreens();
+            document.getElementById('ready-screen').style.display = 'flex';
+            document.getElementById('ready-level').textContent = currentLevel;
+            
+            let count = 3;
+            const el = document.getElementById('countdown');
+            el.textContent = count;
+            
+            const int = setInterval(() => {
+                count--;
+                if (count > 0) el.textContent = count;
+                else { clearInterval(int); startLevel(); }
+            }, 850);
+        }
+        
+        function hideAllScreens() {
+            document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
+        }
+        
+        function startGame() {
+            currentLevel = 1;
+            score = 0;
+            startCountdown();
+        }
+        
+        function pauseGame() {
+            if (gameState !== 'playing') return;
+            clearInterval(timerInterval);
+            gameState = 'paused';
+            hideAllScreens();
+            document.getElementById('pause-screen').style.display = 'flex';
+            document.getElementById('bottom-controls').style.display = 'none';
+        }
+        
+        function resumeGame() {
+            hideAllScreens();
+            document.getElementById('hud').style.display = 'flex';
+            document.getElementById('bottom-controls').style.display = 'flex';
+            gameState = 'playing';
+            startTime = Date.now();
+            timerInterval = setInterval(updateTimer, 16);
+            gameLoop();
+        }
+        
+        function restartLevel() {
+            startLevel();
+        }
+        
+        function endLevel(success) {
+            clearInterval(timerInterval);
+            const elapsed = (Date.now() - startTime) / 1000;
+            
+            if (success) {
+                const points = Math.floor((18 - elapsed + 5) * 1100);
+                score += Math.max(200, points);
+                document.getElementById('complete-time').textContent = elapsed.toFixed(2);
+                document.getElementById('complete-points').textContent = Math.floor(points);
+                hideAllScreens();
+                document.getElementById('level-complete-screen').style.display = 'flex';
+            } else {
+                document.getElementById('final-level').textContent = currentLevel;
+                document.getElementById('final-score').textContent = score;
+                hideAllScreens();
+                document.getElementById('gameover-screen').style.display = 'flex';
+                saveHighScore();
+            }
+            document.getElementById('bottom-controls').style.display = 'none';
+            gameState = success ? 'levelcomplete' : 'gameover';
+        }
+        
+        function nextLevel() {
+            document.getElementById('level-complete-screen').style.display = 'none';
+            currentLevel++;
+            if (currentLevel > 10) {
+                saveHighScore();
+                alert(`🎉 CONGRATULATIONS!\n\nYou completed all 10 levels!\nFinal Score: ${score}`);
+                goHome();
+                return;
+            }
+            startCountdown();
+        }
+        
+        function restartGame() { 
+            document.getElementById('gameover-screen').style.display = 'none';
+            currentLevel = 1; 
+            score = 0;
+            startCountdown();
+        }
+        
+        function goHome() {
+            hideAllScreens();
+            document.getElementById('home-screen').style.display = 'flex';
+            document.getElementById('hud').style.display = 'none';
+            document.getElementById('bottom-controls').style.display = 'none';
+            clearInterval(timerInterval);
+            gameState = 'home';
+        }
+        
+        function showHighScores() {
+            let msg = "🏆 HIGH SCORES\n\n";
+            const sorted = [...highScores].sort((a,b)=>b.score-a.score);
+            sorted.slice(0,10).forEach((s,i) => {
+                msg += `${i+1}. ${s.score} pts (Lv.${s.level})\n`;
+            });
+            alert(msg || "No scores yet!");
+        }
+        
+        function saveHighScore() {
+            if (score > 0) {
+                highScores.push({score: score, level: Math.min(currentLevel, 10)});
+                highScores.sort((a,b)=>b.score-a.score);
+                highScores = highScores.slice(0,20);
+                localStorage.setItem('popoutHighScores', JSON.stringify(highScores));
+            }
+        }
+        
+        function getClickPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            let clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+        
+        function handleInput(e) {
+            if (gameState !== 'playing' || !target) return;
+            e.preventDefault();
+            const pos = getClickPos(e);
+            if (target.contains(pos.x, pos.y)) endLevel(true);
+        }
+        
+        canvas.addEventListener('click', handleInput);
+        canvas.addEventListener('touchstart', handleInput);
+        
+        window.onload = () => {
+            goHome(); // Ensure clean start
+            console.log("%cPopout - HUD now hidden on home screen", "color:#ff0033");
+        };
+    </script>
+</body>
+</html>
