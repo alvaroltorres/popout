@@ -29,3 +29,7 @@ A fast-paced visual search game inspired by cognitive psychology experiments.
 - Vanilla JavaScript
 - Pure CSS
 - No frameworks or dependencies
+
+## Credits
+
+Inspired by lecture from PD Dr Georges Hattab (Advanced Data Visualization for Artificial Intelligence at FUB)
